@@ -1,35 +1,62 @@
-# Federated-AI-Commons-Model
+# Federated AI-Commons Model
 
-An agent-based simulation (Mesa) of resource allocation under scarcity vs.
-abundance, crisis governance, citizen agency (tested against Ostrom's
-commons-governance principles), and — as of this revision — a full second
-economic layer: a Raw Material Conversion economy with a structurally blind
-Ledger, community-level barter, and ecological cost feedback on both
-material-delivery systems.
+An agent-based simulation testing whether a post-scarcity governance
+framework — built on Elinor Ostrom's commons-governance principles —
+actually holds up when implemented and adversarially stress-tested,
+rather than just argued for in theory. Includes a working MCP server that
+exposes the simulation as callable tools for AI agents, and a stateless
+"governance primitive" that lets an agent check whether a proposed action
+complies with the framework's rules, verified against the simulation's
+own logic rather than reimplemented from a description of it.
 
-**Read `FINDINGS.md` before tuning parameters blind.** Several defaults only
-make sense in light of bugs and calibration issues already found and fixed
-— reusing intuitive-looking values without that context will likely
-reproduce mistakes already made once. This file is the map; `FINDINGS.md`
-is the full experimental record, including every bug caught and how.
+**License:** Apache 2.0. **Core dependency:** [Mesa](https://mesa.readthedocs.io/) (agent-based modeling in Python).
 
-**Run `pytest test_federated_ai_commons_model.py` before trusting any change.**
-A persisted regression suite now exists specifically because this project
-hit real, avoidable mistakes from *not* having one — including once
-starting to build a duplicate of a feature that already existed a few
-hundred lines away.
+---
+
+## What makes this worth a look
+
+Most of what's genuinely worth reading here isn't the simulation's
+existence — it's the discipline behind it. Every mechanism was built
+expecting to find its own failure mode, and several real bugs, exploits,
+and false conclusions were caught and fixed as a direct result, not
+hidden after the fact:
+
+- A hard-threshold emergency-governance mechanic was found to produce
+  *permanent* crisis rule under default conditions (~70–90% of the time),
+  not occasional intervention — a concrete demonstration of a real AI
+  governance risk. It was redesigned around consent (a citizen vote)
+  rather than force, and the same pattern was later reused for
+  ecological limits and shared-resource conflicts.
+- Democratic policy voting was tested directly and found genuinely
+  vulnerable to capture: free-riding strategies, forming a numerical
+  majority, voted themselves into the most exploitable governance policy
+  — a real result, not a hypothetical concern about democracy.
+- A reputation-reward mechanism was found to let free-riders launder
+  unearned resources into status before being fixed; a barter-economy
+  value function was found to make trading a *strictly worse* strategy
+  than isolation before being fixed; an evolutionary fitness metric was
+  found to collapse an entire economy into monoculture before being fixed.
+- The "governance primitive" compliance rules are extracted verbatim from
+  the simulation's real decision logic and verified by capturing actual
+  votes and transfers from a live run — not just checked against
+  themselves, which would prove nothing.
+
+The full record of every finding, bug, and fix — in the order it
+happened — is in [`FINDINGS.md`](FINDINGS.md).
 
 ---
 
 ## Quick start
 
-```python
-!pip install -q mesa pytest   # if running in Colab
+```bash
+pip install mesa pytest mcp networkx numpy
+```
 
+```python
 from federated_ai_commons_model import FederatedAICommonsModel
 
 m = FederatedAICommonsModel(200, 8, seed=1, coupled_governance=True,
-                            rehabilitation_enabled=True, graduation_enabled=True)
+                             rehabilitation_enabled=True, graduation_enabled=True)
 for _ in range(300):
     m.step()
 
@@ -37,134 +64,67 @@ df = m.datacollector.get_model_vars_dataframe()
 df.tail(10)
 ```
 
-Pasting the file into a notebook cell instead of uploading it? Use
-`%%writefile federated_ai_commons_model.py` as the cell's first line and
-run it in its own cell before importing — 2,300+ lines pasted as
-directly-executed code is fragile.
+Run the regression suite before trusting any change:
+
+```bash
+pytest test_federated_ai_commons_model.py -v
+```
+
+To run the MCP server (exposes the simulation as tools for an MCP client
+like Claude Desktop — see the header comment in
+`federated_ai_commons_mcp_server.py` for exact client configuration):
+
+```bash
+python3 federated_ai_commons_mcp_server.py
+```
+
+---
+
+## What's in this repo
+
+| file | what it is |
+|---|---|
+| `federated_ai_commons_model.py` | The simulation itself — ~2,300 lines, ~132 opt-in parameters across 28 independent subsystems, all defaulted off to preserve baseline behavior. |
+| `federated_ai_commons_mcp_server.py` | MCP server exposing the simulation as 9 callable tools: run/compare/sweep simulations, documentation lookup, test-suite execution, and governance compliance checks. |
+| `governance_compliance.py` | Three stateless compliance rules (emergency declaration, resource transfer, shared-site continuation), each extracted verbatim from the simulation's logic and verified against real captured simulation data. |
+| `reference_gateway.py` | A worked example of the *honest* way to consume the compliance rules — as one signal among several (auth, rate limiting, compliance) in a real decision, not as a security layer on its own. |
+| `test_federated_ai_commons_model.py` | 13 persisted regression tests covering the load-bearing findings everything else depends on. |
+| `FINDINGS.md` | The full experimental record — every finding, bug, and fix, in order. |
+| `LICENSE` | Apache License 2.0. |
 
 ---
 
 ## Architecture
 
-- **`Citizen`** — strategy, `resources`, `reputation`, `contribution`,
-  `affinities`, `relapse_count`, `experience` (used by the peer
-  rehabilitation mechanic). Pays `effort_cost = contribution ** 2` unless
-  `post_labor_economy_enabled`.
-- **`CommunityNode`** — policy, `care_load`, `crisis_severity`,
-  `emergency_declared`, `local_reserve`/`trust` (federated mode),
-  `distance`/`history` (latency mode), and — new this revision —
-  `raw_materials`, `local_particulars`, `production_strategy`,
-  `assimilated_by`/`consecutive_empty_steps` (ghost-town lifecycle).
-- **`SystemLedger`** — two genuinely separate roles: `get_system_status()`
-  for `informed_migration` (unrelated to allocation), and
-  `ship_raw_materials()`, which is **structurally blind** to everything
-  except `raw_materials` levels — verified by direct source inspection in
-  the test suite, not just by docstring claim.
-- **`FederatedAICommonsModel`** — ~132 opt-in parameters across 28
-  independently-toggleable subsystems, all defaulted to preserve the
-  original unmodified model's behavior.
+- **`Citizen`** — behavioral strategy, `resources`, `reputation`,
+  `contribution`, relational `affinities`, `experience`. Pays
+  `effort_cost = contribution ** 2` unless `post_labor_economy_enabled`.
+- **`CommunityNode`** — governance policy, `care_load`, `crisis_severity`,
+  `emergency_declared`, plus (depending on which subsystems are enabled)
+  federated trust/reserves, latency/distance state, and the raw-material
+  economy's production and trade state.
+- **`SystemLedger`** — two genuinely separate roles: a migration-decision
+  helper, and `ship_raw_materials()`, which is **structurally blind** to
+  everything except raw material levels — verified by direct source
+  inspection in the test suite, not just claimed in a docstring.
+- **`FederatedAICommonsModel`** — orchestrates every subsystem, all
+  opt-in, all defaulted to preserve original behavior when disabled.
+
+Two full resource-allocation architectures exist side by side and are
+directly comparable: a centralized ledger, and a fully federated network
+of local commons using peer-to-peer trust-based negotiation — including
+under simulated communication latency, relevant to any framing involving
+distributed or off-world coordination.
 
 ---
 
-## What's new this revision: the Raw Material Conversion economy
+## Honest scope
 
-A second, parallel economic layer, entirely separate from the flat
-automation dividend (`post_scarcity_enabled`) — confirmed by direct code
-inspection that neither system touches the other's mechanics except
-through one deliberate shared bridge (ecological cost, below).
-
-- **Two-tier structure**: a "blind" global Ledger ships raw materials
-  based only on `raw_materials` levels (`ship_raw_materials`), each
-  community sovereignly converts its own supply into `local_particulars`
-  via an evolvable `production_strategy`, and communities barter
-  particulars directly with each other — genuine bilateral trade subject
-  to the real "double coincidence of wants" problem (Jevons), not a
-  central clearinghouse.
-- **`particulars_consumption_enabled`** closes a real gap: for a while,
-  none of this reached individual citizens at all. Fixed with a
-  diminishing-returns (not flat) value function — confirmed necessary
-  directly: the flat version made *not* trading a strictly dominant
-  strategy for citizen welfare, tested and reversed.
-- **`citizen_philanthropy_enabled`** — individual resources for reputation,
-  no currency. Found and fixed a real reputation-laundering exploit where
-  free-riding strategies could convert unearned dividend money into
-  reputation; now gated on genuine contribution.
-- **`ledger_ecological_cost_enabled`** — the one deliberate bridge between
-  the dividend and the raw-material economy: both get throttled by the
-  same accumulating extraction-damage signal. Tested directly (see
-  `FINDINGS.md`): default parameters are aggressive enough to collapse
-  the dividend to near-zero for everyone, which is itself a real finding,
-  not just a calibration note.
-- **Ghost towns handled realistically, in two stages**: immediate,
-  cost-free wind-down (production pauses, nothing lost, resumes instantly
-  on repopulation) followed only by delayed assimilation to a trusted
-  neighbor if abandonment is genuinely sustained (30+ steps) — not a
-  single harsh event.
-
-## Also resolved this revision: both long-standing dead-code items
-
-- **`peer_rehabilitation_enabled`** — the experience-based individual
-  rehabilitation mechanic, dormant for many revisions, is now a real,
-  tested, mutually-exclusive alternative to the community-investment
-  mechanic. Finding: both converge to the same long-run flourishing
-  ceiling, but peer rehabilitation gets there measurably faster, via a
-  genuine compounding-skill dynamic the original mechanic can't produce.
-- **`socialize_new_agent`** — confirmed permanently unreachable (no birth
-  mechanism exists anywhere in the model) and deleted outright.
-
----
-
-## Parameter reference (condensed — see `FINDINGS.md` for full detail)
-
-| category | key params | default |
-|---|---|---|
-| Core | `N_citizens`, `N_communities`, `seed` | required / `None` |
-| Coupled / Gradual Crisis Governance | `coupled_governance`, `gradual_crisis_response_enabled` | `False` |
-| Rehabilitation | `rehabilitation_enabled`, `graduation_enabled`, **`peer_rehabilitation_enabled`** | `False` |
-| Post-Scarcity/Automation | `post_scarcity_enabled`, `automation_level_enabled`, `automation_care_absorption` | `False` / `0.0` |
-| Post-Labor Economy | `post_labor_economy_enabled` | `False` |
-| Allocation (centralized) | `flat_allocation`, `population_weighted_allocation`, `memory_decay_enabled` | `False` |
-| Citizen Agency | `caregiver_choice_enabled`, `policy_voting_enabled`, `relapse_history_penalty` | `False` |
-| Contested Sites / Ecology | `contested_sites_enabled`, `ecological_impact_enabled` | `False` |
-| **Raw Material Economy** | `raw_material_economy_enabled`, `particulars_consumption_enabled`, `strategy_fitness_metric` | `False` / `"total_particulars"` |
-| **Ledger Ecological Cost** | `ledger_ecological_cost_enabled`, `ecological_cost_per_unit` | `False` |
-| **Citizen Philanthropy** | `citizen_philanthropy_enabled`, `philanthropy_min_contribution` | `False`, `0.3` |
-| **Community Assimilation** | `abandonment_threshold` | `30` |
-| Federated Commons | `federated_mode`, `local_reserve_target`, `trust_initial` | `False` |
-| Communication Latency | `communication_latency_enabled`, `min_distance`, `max_distance` | `False` |
-| Privacy | `privacy_enabled` | `False` |
-| Automated Provisioning | `automated_provisioning_enabled`, `provisioning_detects_inequality`, `individual_floor_enabled` | `False` |
-| Debug | `debug_assertions`, `log_allocation_details` | `False` |
-
-**Bold rows are new this revision.**
-
----
-
-## The short version of what's been found, cumulative
-
-- The default labor economy is structurally broken (~150x cost/payout
-  mismatch) unless `post_scarcity_enabled` or properly-calibrated
-  `automation_level_enabled` is on. **Still no runtime warning for this —
-  open item.**
-- `coupled_governance` produces *permanent* emergency rule by default;
-  `gradual_crisis_response_enabled` fixes the *legitimacy* of how it's
-  invoked (consent vs. force), not the underlying frequency — that still
-  needs `automation_care_absorption`.
-- The project's founding philosophical thesis reproduces mechanically:
-  once labor decouples from survival, resource inequality collapses while
-  reputation inequality persists as the durable axis of status.
-- **Citizen agency is necessary but not sufficient for good governance** —
-  democratic voting can and does select the most exploitable policy when
-  free-riders form a majority.
-- **Every reward mechanism built this project needed adversarial testing
-  before it could be trusted** — philanthropy laundered dividend money
-  into reputation until gated; flat particulars valuation made trading
-  strictly worse than isolation until fixed; the "Big Push" turned out to
-  be optional once the environment was properly fixed first.
-- A persisted test suite now exists specifically because ad-hoc,
-  one-off regression scripts already caused two real mistakes this
-  project — a near-duplicated feature and a false regression alarm from
-  comparing incompatible sample sizes.
-
-**For the full experimental record, the Ostrom-principle analysis, every
-bug and how it was found, and current known issues, see `FINDINGS.md`.**
+This is a stylized research simulation — scripted behavioral strategies,
+not adaptive agents; no physical production; no real politics. It tests
+whether a governance framework's internal logic holds together and
+surfaces concrete, reproducible failure modes when you actually try to
+break it. It does not, and cannot, prove the framework would work if
+built by real institutions with real humans in them. Read `FINDINGS.md`
+for exactly what's been tested, what's been found broken and fixed, and
+what's still an open question.
